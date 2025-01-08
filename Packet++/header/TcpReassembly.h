@@ -542,12 +542,13 @@ namespace pcpp
 		};
 
 		typedef std::unordered_map<uint32_t, TcpReassemblyData> ConnectionList;
-		typedef std::map<time_t, std::list<uint32_t>> CleanupList;
+		typedef std::map<std::chrono::time_point<std::chrono::high_resolution_clock>, std::list<uint32_t>> CleanupList;
 
 		OnTcpMessageReady m_OnMessageReadyCallback;
 		OnTcpConnectionStart m_OnConnStart;
 		OnTcpConnectionEnd m_OnConnEnd;
 		void* m_UserCookie;
+		std::chrono::time_point<std::chrono::high_resolution_clock> m_CurrTime{};
 		ConnectionList m_ConnectionList;
 		ConnectionInfoList m_ConnectionInfo;
 		CleanupList m_CleanupList;
@@ -555,7 +556,7 @@ namespace pcpp
 		uint32_t m_ClosedConnectionDelay;
 		uint32_t m_MaxNumToClean;
 		size_t m_MaxOutOfOrderFragments;
-		time_t m_PurgeTimepoint;
+		std::chrono::time_point<std::chrono::high_resolution_clock, std::chrono::seconds> m_PurgeTimepoint{};
 		bool m_EnableBaseBufferClearCondition;
 		bool m_ProcessingOutOfOrder = false;
 

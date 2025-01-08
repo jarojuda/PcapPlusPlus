@@ -75,19 +75,21 @@ namespace pcpp
 		m_RemoveConnInfo = config.removeConnInfo;
 		m_MaxNumToClean = (config.removeConnInfo == true && config.maxNumToClean == 0) ? 30 : config.maxNumToClean;
 		m_MaxOutOfOrderFragments = config.maxOutOfOrderFragments;
-		m_PurgeTimepoint = time(nullptr) + PURGE_FREQ_SECS;
 		m_EnableBaseBufferClearCondition = config.enableBaseBufferClearCondition;
 	}
 
 	TcpReassembly::ReassemblyStatus TcpReassembly::reassemblePacket(Packet& tcpData)
 	{
+		// time stamp for this packet
+		m_CurrTime = timespecToTimePoint(tcpData.getRawPacket()->getPacketTimeStamp());
 		// automatic cleanup
 		if (m_RemoveConnInfo == true)
 		{
-			if (time(nullptr) >= m_PurgeTimepoint)
+			if (m_CurrTime >= m_PurgeTimepoint)
 			{
 				purgeClosedConnections();
-				m_PurgeTimepoint = time(nullptr) + PURGE_FREQ_SECS;
+				m_PurgeTimepoint = std::chrono::time_point_cast<std::chrono::seconds>(
+					m_CurrTime + std::chrono::seconds{PURGE_FREQ_SECS});
 			}
 		}
 
@@ -141,9 +143,6 @@ namespace pcpp
 		// calculate flow key for this packet
 		uint32_t flowKey = hash5Tuple(&tcpData);
 
-		// time stamp for this packet
-		auto currTime = timespecToTimePoint(tcpData.getRawPacket()->getPacketTimeStamp());
-
 		// find the connection in the connection map
 		ConnectionList::iterator iter = m_ConnectionList.find(flowKey);
 
@@ -159,7 +158,7 @@ namespace pcpp
 			tcpReassemblyData->connData.srcPort = tcpLayer->getSrcPort();
 			tcpReassemblyData->connData.dstPort = tcpLayer->getDstPort();
 			tcpReassemblyData->connData.flowKey = flowKey;
-			tcpReassemblyData->connData.setStartTime(currTime);
+			tcpReassemblyData->connData.setStartTime(m_CurrTime);
 
 			m_ConnectionInfo[flowKey] = tcpReassemblyData->connData;
 
@@ -179,10 +178,10 @@ namespace pcpp
 
 			tcpReassemblyData = &iter->second;
 
-			if (currTime > tcpReassemblyData->connData.endTimePrecise)
+			if (m_CurrTime > tcpReassemblyData->connData.endTimePrecise)
 			{
-				tcpReassemblyData->connData.setEndTime(currTime);
-				m_ConnectionInfo[flowKey].setEndTime(currTime);
+				tcpReassemblyData->connData.setEndTime(m_CurrTime);
+				m_ConnectionInfo[flowKey].setEndTime(m_CurrTime);
 			}
 		}
 
@@ -323,7 +322,7 @@ namespace pcpp
 			if (tcpPayloadSize != 0 && m_OnMessageReadyCallback != nullptr)
 			{
 				TcpStreamData streamData(tcpLayer->getLayerPayload(), tcpPayloadSize, 0, tcpReassemblyData->connData,
-				                         currTime);
+				                         m_CurrTime);
 				m_OnMessageReadyCallback(sideIndex, streamData, m_UserCookie);
 			}
 			status = TcpMessageHandled;
@@ -361,7 +360,7 @@ namespace pcpp
 				if (m_OnMessageReadyCallback != nullptr)
 				{
 					TcpStreamData streamData(tcpLayer->getLayerPayload() + newLength, tcpPayloadSize - newLength, 0,
-					                         tcpReassemblyData->connData, currTime);
+					                         tcpReassemblyData->connData, m_CurrTime);
 					m_OnMessageReadyCallback(sideIndex, streamData, m_UserCookie);
 				}
 				status = TcpMessageHandled;
@@ -414,7 +413,7 @@ namespace pcpp
 			if (m_OnMessageReadyCallback != nullptr)
 			{
 				TcpStreamData streamData(tcpLayer->getLayerPayload(), tcpPayloadSize, 0, tcpReassemblyData->connData,
-				                         currTime);
+				                         m_CurrTime);
 				m_OnMessageReadyCallback(sideIndex, streamData, m_UserCookie);
 			}
 			status = TcpMessageHandled;
@@ -460,7 +459,7 @@ namespace pcpp
 			newTcpFrag->data = new uint8_t[tcpPayloadSize];
 			newTcpFrag->dataLength = tcpPayloadSize;
 			newTcpFrag->sequence = sequence;
-			newTcpFrag->timestamp = currTime;
+			newTcpFrag->timestamp = m_CurrTime;
 			memcpy(newTcpFrag->data, tcpLayer->getLayerPayload(), tcpPayloadSize);
 			tcpReassemblyData->twoSides[sideIndex].tcpFragmentList.pushBack(newTcpFrag);
 
@@ -803,7 +802,7 @@ namespace pcpp
 		// does not already contain an element with an equivalent key, otherwise this method returns an iterator to the
 		// element that prevents insertion.
 		std::pair<CleanupList::iterator, bool> pair =
-		    m_CleanupList.insert(std::make_pair(time(nullptr) + m_ClosedConnectionDelay, CleanupList::mapped_type()));
+		    m_CleanupList.insert(std::make_pair(m_CurrTime + std::chrono::seconds{m_ClosedConnectionDelay}, CleanupList::mapped_type()));
 
 		// getting the reference to list
 		CleanupList::mapped_type& keysList = pair.first->second;
@@ -817,7 +816,7 @@ namespace pcpp
 		if (maxNumToClean == 0)
 			maxNumToClean = m_MaxNumToClean;
 
-		CleanupList::iterator iterTime = m_CleanupList.begin(), iterTimeEnd = m_CleanupList.upper_bound(time(nullptr));
+		CleanupList::iterator iterTime = m_CleanupList.begin(), iterTimeEnd = m_CleanupList.upper_bound(m_CurrTime);
 		while (iterTime != iterTimeEnd && count < maxNumToClean)
 		{
 			CleanupList::mapped_type& keysList = iterTime->second;
